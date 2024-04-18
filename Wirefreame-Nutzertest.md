@@ -1,3 +1,3 @@
 # Hypothesenbildung
-Was wollen wir mit dem Nutzertest erreichen? Wie sollen wir die gewonnenen Daten bewerten?
+## Was wollen wir mit dem Nutzertest erreichen? Wie sollen wir die gewonnenen Daten bewerten?
 
