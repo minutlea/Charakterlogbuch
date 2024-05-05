@@ -1,5 +1,5 @@
 # Roadmap der App Charakter Logbuch
-V0.1: Wireframe der App erstellen. Ideensammlung über eventuell machbre Features
+V0.1: Wireframe der App erstellen. Ideensammlung über eventuell machbare Features
 
 V1.0: MVP mit E-mail login und generelles layout der App. Funktionelle Charaktererstellung.
 
