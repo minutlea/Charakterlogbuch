@@ -8,7 +8,7 @@ from PIL import Image
 from io import BytesIO
 
 # GitHub-Informationen
-GITHUB_TOKEN = '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'  # Ersetze durch deinen tatsächlichen Token
+GITHUB_TOKEN = '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'  # Ersetze durch deinen tatsächlichen Token
 REPO_OWNER = 'minutlea'  # Ersetze durch deinen GitHub-Benutzernamen
 REPO_NAME = 'Charakterlogbuch'  # Ersetze durch den Namen deines Repositories
 FILE_PATH = 'user_data.json'  # Der Pfad zur Datei im Repository
