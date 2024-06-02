@@ -5,6 +5,7 @@ from io import BytesIO
 import binascii
 import pandas as pd
 from github_contents import GithubContents
+import bcrypt
 import urllib
 
 # Set constants
