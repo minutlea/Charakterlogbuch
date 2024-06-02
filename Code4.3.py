@@ -1,103 +1,122 @@
 import streamlit as st
-import hashlib
-import json
-import os
 import base64
-import requests
 from PIL import Image
 from io import BytesIO
+import binascii
+import pandas as pd
+from github_contents import GithubContents
+import bcrypt
+import urllib
 
-# GitHub-Informationen
-GITHUB_TOKEN = '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'  # Ersetze durch deinen tatsächlichen Token
-REPO_OWNER = 'minutlea'  # Ersetze durch deinen GitHub-Benutzernamen
-REPO_NAME = 'Charakterlogbuch'  # Ersetze durch den Namen deines Repositories
-FILE_PATH = 'user_data.json'  # Der Pfad zur Datei im Repository
+# Set constants
+DATA_FILE = "MyLoginTable.csv"
+DATA_COLUMNS = ['username', 'name', 'password']
+CHAR_COLUMNS = [
+    "username",
+    "name",
+    "age",
+    "gender",
+    "race",
+    "body_type",
+    "eye_color",
+    "hair_color",
+    "skin_color",
+    "skin_condition",
+    "characteristics",
+    "perks",
+    "flaws",
+    "special_traits",
+    "image"
+    ]
 
-# Funktion zum Hashen von Passwörtern
-def hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
+def login_page():
+    """ Login an existing user. """
+    st.title("Login")
+    with st.form(key='login_form'):
+        st.session_state['username'] = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        if st.form_submit_button("Login"):
+            authenticate(st.session_state.username, password)
 
-# Funktion zum Laden von Benutzerdaten aus der JSON-Datei auf GitHub
-def load_user_data():
-    url = f'https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{FILE_PATH}'
-    headers = {'Authorization': f'token {GITHUB_TOKEN}'}
-    response = requests.get(url, headers=headers)
-   
-    if response.status_code == 200:
-        file_content = base64.b64decode(response.json()['content']).decode()
-        return json.loads(file_content)
-    elif response.status_code == 404:
-        return {}  # Datei nicht gefunden, leere Daten zurückgeben
+def register_page():
+    """ Register a new user. """
+    st.title("Register")
+    with st.form(key='register_form'):
+        new_username = st.text_input("New Username")
+        new_name = st.text_input("Name")
+        new_password = st.text_input("New Password", type="password")
+        if st.form_submit_button("Register"):
+            hashed_password = bcrypt.hashpw(new_password.encode('utf8'), bcrypt.gensalt()) # Hash the password
+            hashed_password_hex = binascii.hexlify(hashed_password).decode() # Convert hash to hexadecimal string
+            
+            # Check if the username already exists
+            if new_username in st.session_state.df_users['username'].values:
+                st.error("Username already exists. Please choose a different one.")
+                return
+            else:
+                new_user = pd.DataFrame([[new_username, new_name, hashed_password_hex]], columns=DATA_COLUMNS)
+                st.session_state.df_users = pd.concat([st.session_state.df_users, new_user], ignore_index=True)
+                
+                # Writes the updated dataframe to GitHub data repository
+                st.session_state.github.write_df(DATA_FILE, st.session_state.df_users, "added new user")
+                st.success("Registration successful! You can now log in.")
+
+def authenticate(username, password):
+    """ 
+    Initialize the authentication status.
+
+    Parameters:
+    username (str): The username to authenticate.
+    password (str): The password to authenticate.    
+    """
+    login_df = st.session_state.df_users
+    login_df['username'] = login_df['username'].astype(str)
+
+    if username in login_df['username'].values:
+        stored_hashed_password = login_df.loc[login_df['username'] == username, 'password'].values[0]
+        stored_hashed_password_bytes = binascii.unhexlify(stored_hashed_password) # convert hex to bytes
+        
+        # Check the input password
+        if bcrypt.checkpw(password.encode('utf8'), stored_hashed_password_bytes): 
+            st.session_state['authentication'] = True
+            st.success('Login successful')
+            st.rerun()
+        else:
+            st.error('Incorrect password')
     else:
-        st.error(f"Fehler beim Laden der Benutzerdaten von GitHub: {response.status_code} - {response.json()}")
-        return {}
+        st.error('Username not found')
 
-# Funktion zum Speichern von Benutzerdaten in die JSON-Datei auf GitHub
-def save_user_data(user_data):
-    url = f'https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{FILE_PATH}'
-    headers = {'Authorization': f'token {GITHUB_TOKEN}'}
+def init_github():
+    """Initialize the GithubContents object."""
+    if 'github' not in st.session_state:
+        st.session_state.github = GithubContents(
+            st.secrets["github"]["owner"],
+            st.secrets["github"]["repo"],
+            st.secrets["github"]["token"])
+        print("github initialized")
+    
+def init_credentials():
+    """Initialize or load the dataframe."""
+    if 'df_users' in st.session_state:
+        pass
 
-    # Laden der Datei, um die SHA zu bekommen
-    response = requests.get(url, headers=headers)
-    if response.status_code == 200:
-        sha = response.json()['sha']
-    elif response.status_code == 404:
-        sha = None
+    if st.session_state.github.file_exists(DATA_FILE):
+        st.session_state.df_users = st.session_state.github.read_df(DATA_FILE)
     else:
-        st.error(f"Fehler beim Laden der SHA von GitHub: {response.status_code} - {response.json()}")
-        return
+        st.session_state.df_users = pd.DataFrame(columns=DATA_COLUMNS)
 
-    data = {
-        'message': 'Automated upload of user data',
-        'content': base64.b64encode(json.dumps(user_data).encode()).decode(),
-        'branch': 'main'  # oder dein gewünschter Branch
-    }
-    if sha:
-        data['sha'] = sha
+def init_character_data():
+    """Initialize or load the character dataframe."""
 
-    response = requests.put(url, headers=headers, json=data)
-    if response.status_code in [200, 201]:
-        st.success("Benutzerdaten erfolgreich gespeichert")
+    char_file = f"MyCharacterTable_{st.session_state.username}.csv"
+    if 'df_characters' in st.session_state:
+        pass
+
+    if st.session_state.github.file_exists(char_file):
+        st.session_state.df_characters = st.session_state.github.read_df(char_file)
     else:
-        st.error(f"Fehler beim Speichern der Benutzerdaten auf GitHub: {response.status_code} - {response.json()}")
+        st.session_state.df_characters = pd.DataFrame(columns=CHAR_COLUMNS)
 
-# Funktion zur Benutzerregistrierung
-def register_user(email, password):
-    user_data = load_user_data()
-    if email in user_data:
-        st.error("Email bereits registriert")
-        return
-
-    hashed_password = hash_password(password)
-    user_data[email] = {"email": email, "password": hashed_password, "characters": []}
-    save_user_data(user_data)
-    st.success(f"Benutzer mit Email {email} registriert")
-    st.session_state.logged_in = True
-    st.session_state.characters = []
-    st.session_state.email = email
-
-# Funktion zur Benutzeranmeldung
-def login_user(email, password):
-    user_data = load_user_data()
-    if email not in user_data:
-        st.error("Email nicht registriert")
-        return
-
-    hashed_password = hash_password(password)
-    if user_data[email]["password"] == hashed_password:
-        st.success(f"Benutzer mit Email {email} angemeldet")
-        st.session_state.logged_in = True
-        st.session_state.characters = user_data[email].get("characters", [])
-        st.session_state.email = email
-    else:
-        st.error("Falsches Passwort")
-
-# Funktion zum Abmelden
-def logout():
-    st.session_state.logged_in = False
-    st.session_state.characters = []
-    st.session_state.email = None
-    st.success("Erfolgreich abgemeldet")
 
 # Funktion zum Konvertieren von Bildern in Base64
 def image_to_base64(image):
@@ -129,11 +148,14 @@ def create_character():
     perks = st.text_area("Vorteile", "Vorteile hier eingeben...")
     flaws = st.text_area("Fehler", "Fehler hier eingeben...")
     special_traits = st.text_area("Besondere Merkmale", "Besondere Merkmale hier eingeben...")
-    character_image = st.file_uploader("Charakterbild hochladen", type=["jpg", "jpeg", "png"])
+    #character_image = st.file_uploader("Charakterbild hochladen", type=["jpg", "jpeg", "png"])
+    character_image = st.text_input("Bild-URL", "Bild-URL hier eingeben...")
+
 
     if st.button("Charakter erstellen"):
         # Charakterdaten in Session State speichern
         character_data = {
+            "username": st.session_state.username, 
             "name": name,
             "age": age,
             "gender": gender,
@@ -152,71 +174,71 @@ def create_character():
 
         # Bild hochladen
         if character_image:
-            character_data["image"] = image_to_base64(character_image)
+            character_data["image"] = character_image
 
-        st.session_state.characters.append(character_data)
-        save_character_data(st.session_state.characters)
-        st.success("Charakter erfolgreich erstellt")
+        save_character_data(character_data)
+        st.dataframe(st.session_state.df_characters)
 
 # Funktion zum Bearbeiten eines vorhandenen Charakters
 def edit_character():
     st.title("Charakter bearbeiten")
-    characters = [character["name"] for character in st.session_state.characters]
+    characters = st.session_state.df_characters['name'].unique().tolist()
     selected_character = st.selectbox("Zu bearbeitenden Charakter auswählen", characters)
-    selected_character_data = next(character for character in st.session_state.characters if character["name"] == selected_character)
 
     st.subheader("Charaktereigenschaften bearbeiten")
-    selected_character_data["name"] = st.text_input("Name", selected_character_data["name"])
-    selected_character_data["age"] = st.number_input("Alter", min_value=0, max_value=200, value=selected_character_data["age"])
-    selected_character_data["gender"] = st.selectbox("Geschlecht", ["Männlich", "Weiblich", "Andere"], index=["Männlich", "Weiblich", "Andere"].index(selected_character_data["gender"]))
-    selected_character_data["race"] = st.selectbox("Rasse", ["Mensch", "Elf", "Zwerg", "Ork", "Goblin", "Tiefling", "Halbelf", "Drachengeborener", "Halbork", "Andere"], index=["Mensch", "Elf", "Zwerg", "Ork", "Goblin", "Tiefling", "Halbelf", "Drachengeborener", "Halbork", "Andere"].index(selected_character_data["race"]))
-    selected_character_data["body_type"] = st.text_input("Körperbau", selected_character_data["body_type"])
-    selected_character_data["eye_color"] = st.color_picker("Augenfarbe", selected_character_data["eye_color"])
-    selected_character_data["hair_color"] = st.color_picker("Haarfarbe", selected_character_data["hair_color"])
-    selected_character_data["skin_color"] = st.color_picker("Hautfarbe", selected_character_data["skin_color"])
-    selected_character_data["skin_condition"] = st.text_input("Hautzustand", selected_character_data["skin_condition"])
-    selected_character_data["characteristics"] = st.text_area("Charakteristika", selected_character_data["characteristics"])
-    selected_character_data["perks"] = st.text_area("Vorteile", selected_character_data["perks"])
-    selected_character_data["flaws"] = st.text_area("Fehler", selected_character_data["flaws"])
-    selected_character_data["special_traits"] = st.text_area("Besondere Merkmale", selected_character_data["special_traits"])
-
-    character_image = st.file_uploader("Charakterbild hochladen", type=["jpg", "jpeg", "png"], key="edit_image")
-    if character_image:
-        selected_character_data["image"] = image_to_base64(character_image)
-
+    changed_data = st.data_editor(st.session_state.df_characters.loc[st.session_state.df_characters['name'] == selected_character])
+    st.session_state.df_characters.loc[st.session_state.df_characters['name'] == selected_character] = changed_data
     if st.button("Änderungen speichern"):
-        save_character_data(st.session_state.characters)
-        st.success("Charakteränderungen erfolgreich gespeichert")
+        st.session_state.github.write_df(f"MyCharacterTable_{st.session_state.username}.csv", st.session_state.df_characters, "changed character")
+        st.success("Character data saved successfully.")
+
 
 # Funktion zum Laden der erstellten Charaktere
 def load_characters():
     st.title("Charaktere laden")
-    if st.session_state.characters:
-        for character in st.session_state.characters:
+    if st.session_state.df_characters is not None and not st.session_state.df_characters.empty:
+        for _, character in st.session_state.df_characters.iterrows():
             st.write(f"Name: {character['name']}")
-            if character['image']:
-                st.image(base64_to_image(character['image']), caption=character['name'], width=150)
+            if character['image'] and not pd.isna(character['image']) and is_valid_url(character['image']):
+                st.image(character['image'])
             else:
-                st.write("Kein Bild für diesen Charakter verfügbar.")
+                st.write(" -> Kein Bild für diesen Charakter verfügbar.")
     else:
         st.write("Noch keine Charaktere erstellt.")
 
+def is_valid_url(url):
+    try:
+        result = urllib.parse.urlparse(url)
+        return all([result.scheme, result.netloc])
+    except ValueError:
+        return False
+
 # Funktion zum Speichern der Charakterdaten
-def save_character_data(characters):
-    user_data = load_user_data()
-    user_data[st.session_state.email]["characters"] = characters
-    save_user_data(user_data)
+def save_character_data(character_data):
+    new_entry = pd.DataFrame([character_data], columns=CHAR_COLUMNS)
+    st.session_state.df_characters = pd.concat([st.session_state.df_characters, new_entry], ignore_index=True)
+    st.session_state.github.write_df(f"MyCharacterTable_{st.session_state.username}.csv", st.session_state.df_characters, "added new character")
+    st.success("Character data saved successfully.")
 
-# Hauptfunktion
+
 def main():
-    # Logo oben in der App anzeigen
-    st.image("logo.jpeg", width=200)
-    st.title("Charakter-Logbuch")
+    init_github() # Initialize the GithubContents object
+    init_credentials() # Loads the credentials from the Github data repository
 
-    if "logged_in" not in st.session_state:
-        st.session_state.logged_in = False
+    if 'authentication' not in st.session_state:
+        st.session_state['authentication'] = False
 
-    if st.session_state.logged_in:
+    if not st.session_state['authentication']:
+        st.image("logo.jpeg", width=200)
+        st.title("Charakter-Logbuch")
+        options = st.sidebar.selectbox("Select a page", ["Login", "Register"])
+        if options == "Login":
+            login_page()
+        elif options == "Register":
+            register_page()
+
+    else:
+        init_character_data()
         st.sidebar.title("Optionen")
         option = st.sidebar.selectbox("Option auswählen", ("Neuen Charakter erstellen", "Charakter bearbeiten", "Charaktere laden", "Abmelden"))
 
@@ -227,19 +249,9 @@ def main():
         elif option == "Charaktere laden":
             load_characters()
         elif option == "Abmelden":
-            logout()
-    else:
-        # Login oder Registrierung
-        login_or_register = st.radio("Login oder Registrierung", ("Login", "Registrieren"))
-        email = st.text_input("Email")
-        password = st.text_input("Passwort", type="password")
+            st.session_state['authentication'] = False
+            st.rerun()
 
-        if st.button(login_or_register):
-            st.session_state.email = email
-            if login_or_register == "Login":
-                login_user(email, password)
-            else:
-                register_user(email, password)
 
 if __name__ == "__main__":
     main()
