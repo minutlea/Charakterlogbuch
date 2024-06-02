@@ -5,7 +5,7 @@ from io import BytesIO
 import binascii
 import pandas as pd
 from github_contents import GithubContents
-import bcrypt
+import hashlib
 import urllib
 
 # Set constants
@@ -46,15 +46,14 @@ def register_page():
         new_name = st.text_input("Name")
         new_password = st.text_input("New Password", type="password")
         if st.form_submit_button("Register"):
-            hashed_password = bcrypt.hashpw(new_password.encode('utf8'), bcrypt.gensalt()) # Hash the password
-            hashed_password_hex = binascii.hexlify(hashed_password).decode() # Convert hash to hexadecimal string
+            hashed_password = hashlib.sha256(new_password.encode('utf8')).hexdigest() # Hash the password
             
             # Check if the username already exists
             if new_username in st.session_state.df_users['username'].values:
                 st.error("Username already exists. Please choose a different one.")
                 return
             else:
-                new_user = pd.DataFrame([[new_username, new_name, hashed_password_hex]], columns=DATA_COLUMNS)
+                new_user = pd.DataFrame([[new_username, new_name, hashed_password]], columns=DATA_COLUMNS)
                 st.session_state.df_users = pd.concat([st.session_state.df_users, new_user], ignore_index=True)
                 
                 # Writes the updated dataframe to GitHub data repository
@@ -74,10 +73,10 @@ def authenticate(username, password):
 
     if username in login_df['username'].values:
         stored_hashed_password = login_df.loc[login_df['username'] == username, 'password'].values[0]
-        stored_hashed_password_bytes = binascii.unhexlify(stored_hashed_password) # convert hex to bytes
+        hashed_input_password = hashlib.sha256(password.encode('utf8')).hexdigest()
         
         # Check the input password
-        if bcrypt.checkpw(password.encode('utf8'), stored_hashed_password_bytes): 
+        if hashed_input_password == stored_hashed_password: 
             st.session_state['authentication'] = True
             st.success('Login successful')
             st.rerun()
